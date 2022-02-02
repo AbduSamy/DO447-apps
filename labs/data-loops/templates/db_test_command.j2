@@ -1,0 +1,4 @@
+echo "use {{ database }}" | \
+mysql -u {{ username }} \
+      -p{{ user_passwords[username] }} \
+      -h {{ inventory_hostname }}
