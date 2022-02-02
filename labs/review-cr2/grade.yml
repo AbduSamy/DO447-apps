@@ -1,0 +1,279 @@
+- name: check update-review files
+  hosts: localhost
+  gather_facts: no
+  vars:
+    webapp_plybk: deploy_webapp.yml
+    webapp_role: roles/webapp/tasks/main.yml
+    max_fail_key: max_fail_percentage
+    serial_key: serial
+    delegate_key: delegate_to
+    loop_key: loop
+    pretasks_key: pre_tasks
+    posttasks_key: post_tasks
+    block_key: block
+    become_key: become
+    loop_solutions:
+      - "{% raw %}{{lookup('file','locations.yml')|from_yaml}}{% endraw %}"
+      - "{% raw %}{{lookup('file','locations.yml')|from_yaml|list}}{% endraw %}"
+      - '{% raw %}{{lookup("file","locations.yml")|from_yaml}}{% endraw %}'
+      - '{% raw %}{{lookup("file","locations.yml")|from_yaml|list}}{% endraw %}'
+    dest_template: '{% raw %}/var/www/html/{{item.name}}.html{% endraw %}'
+
+    correct_serial_values:
+      - 1
+      - 100%
+    max_fail_values:
+      - "0%"
+      - "0"
+
+  tasks:
+    - name: Ensure files are loaded
+      set_fact:
+        plybk_data: "{% set data=lookup('file', webapp_plybk) | from_yaml %}{{ data[0] }}"
+        role_data: "{% set data=lookup('file', webapp_role) | from_yaml %}{{ data[0] }}"
+      tags:
+        - check_yaml_lookup
+        - check_serial
+        - check_pre_tasks
+        - check_post_tasks
+        - check_log_contents
+        - check_max_fail
+
+    - name: Ensure YAML file is loaded
+      vars:
+        loop_data: "{{ role_data.block[1].loop | regex_replace('\\s+','')}}"
+        template_dest_data: "{{ role_data.block[1].template.dest | regex_replace('\\s+','')}}"
+      assert:
+        that:
+          - loop_data in loop_solutions
+          - template_dest_data == dest_template
+        success_msg: "YAML file loaded using lookup plugin and 'from_yaml' filter"
+        fail_msg: >
+           The webapp second task is not configured correctly.
+             * Looping over the locations file with a lookup
+             * converting locations file to data by parsing the YAML
+           LOOPING DATA --> {{loop_data}}
+           does not match --> {{ loop_solutions }}
+      tags:
+        - check_yaml_lookup
+
+    - block:
+      - name: Try setting global_become
+        set_fact:
+          global_become: "{{ lookup('ini','become section=privilege_escalation file=ansible.cfg') }}"
+      rescue:
+        - name: Fallback for global_become
+          set_fact:
+            global_become: NOT_PRESENT
+      tags:
+        - global_privilege_escalation
+
+    - name: Check privilege escalation in ansible.cfg
+      assert:
+        that:
+          - global_become == "NOT_PRESENT" or not global_become
+        fail_msg: "'become=true' is still present in ansible.cfg"
+      tags:
+        - global_privilege_escalation
+
+
+    - name: Set facts for firewall tasks
+      set_fact:
+        firewall_task_yaml: "{% set data=lookup('file', 'roles/firewall/tasks/main.yml') | from_yaml %}{{ data[0] }}"
+        firewall_handler_yaml: "{% set data=lookup('file', 'roles/firewall/handlers/main.yml') | from_yaml %}{{ data[0] }}"
+      tags:
+        - firewall_privilege_escalation
+
+    - name: Check firewall tasks
+      assert:
+        that:
+          - become_key in firewall_task_yaml.keys()
+          - firewall_task_yaml['become'] | bool
+      tags:
+        - firewall_privilege_escalation
+
+    - name: Check firewall handlers
+      assert:
+        that:
+          - become_key in firewall_handler_yaml.keys()
+          - firewall_handler_yaml['become'] | bool
+      tags:
+        - firewall_privilege_escalation
+
+
+    - name: Set facts for haproxy tasks
+      set_fact:
+        haproxy_task_yaml: "{% set data=lookup('file', 'roles/haproxy/tasks/main.yml') | from_yaml %}{{ data }}"
+        haproxy_handler_yaml: "{% set data=lookup('file', 'roles/haproxy/handlers/main.yml') | from_yaml %}{{ data }}"
+      tags:
+        - haproxy_privilege_escalation
+
+    - name: Check haproxy tasks
+      vars:
+        bval: "{{ haproxy_task_yaml[0].block | list }}"
+      block:
+        - assert:
+            that:
+              - haproxy_task_yaml[0].become | default(False) | bool
+              - bval[0].become is not defined or (bval[0].become | bool )
+              - bval[1].become is not defined or (bval[1].become | bool )
+              - bval[2].become is not defined or (bval[2].become | bool )
+
+            fail_msg: >
+              The haproxy task block does not have
+              'become' set for the entire block, or
+              there are individual tasks with become set to no.
+              Checking individual tasks now.
+      rescue:
+        - assert:
+            that:
+              - haproxy_task_yaml[0].become is not defined or not (haproxy_task_yaml[0].become | bool)
+              - bval[0].become
+              - bval[1].become
+              - bval[2].become
+            fail_msg: >
+              Individual tasks do not have 'become' configured either.
+      tags:
+        - haproxy_privilege_escalation
+
+    - name: Check haproxy handlers
+      assert:
+        that:
+          - become_key in haproxy_handler_yaml[0].keys()
+          - haproxy_handler_yaml[0]['become'] | bool
+          - become_key in haproxy_handler_yaml[1].keys()
+          - haproxy_handler_yaml[1]['become'] | bool
+        fail_msg: >
+           One of the handlers is not configured for
+           privilege escalation with 'become: yes'
+      tags:
+        - haproxy_privilege_escalation
+
+
+    - name: Set facts for apache tasks
+      set_fact:
+        apache_task_yaml: "{% set data=lookup('file', 'roles/apache/tasks/main.yml') | from_yaml %}{{ data }}"
+      tags:
+        - apache_privilege_escalation
+
+    - name: Check apache tasks
+      vars:
+        bval: "{{ apache_task_yaml[0].block | list }}"
+      block:
+        # Become is only set at the block level...
+        - assert:
+            that:
+              - apache_task_yaml[0].become| default(False) | bool
+              - bval[0].become is not defined or (bval[0].become | bool )
+              - bval[1].become is not defined or (bval[1].become | bool )
+              - bval[2].become is not defined or (bval[2].become | bool )
+            fail_msg: >
+              The apache task block does not have
+              'become' set for the entire block, or
+              there are individual tasks with become set to no.
+              Checking individual tasks now.
+      rescue:
+        # Become not set at block level, but for every task...
+        - assert:
+            that:
+              - apache_task_yaml[0].become is not defined or not (apache_task_yaml[0].become | bool)
+              - bval[0].become
+              - bval[1].become
+              - bval[2].become
+            fail_msg: >
+              Individual tasks do not have 'become' configured either.
+      tags:
+        - apache_privilege_escalation
+
+    - name: Set facts for webapp tasks
+      set_fact:
+        webapp_task_yaml: "{% set data=lookup('file', 'roles/webapp/tasks/main.yml') | from_yaml %}{{ data }}"
+      tags:
+        - webapp_privilege_escalation
+
+    - name: Check webapp tasks
+      vars:
+        bval: "{{ webapp_task_yaml[0].block | list }}"
+      block:
+        # Become is only set at the block level...
+        - assert:
+            that:
+              - webapp_task_yaml[0].become| default(False) | bool
+              - bval[0].become is not defined or (bval[0].become | bool )
+              - bval[1].become is not defined or (bval[1].become | bool )
+            fail_msg: >
+              The webapp task block does not have
+              'become' set for the entire block, or
+              there are individual tasks with become set to no.
+              Checking individual tasks now.
+      rescue:
+        # Become not set at block level, but for every task...
+        - assert:
+            that:
+              - web_task_yaml[0].become is not defined or not (web_task_yaml[0].become | bool)
+              - bval[0].become
+              - bval[1].become
+            fail_msg: >
+              Individual tasks do not have 'become' configured either.
+      tags:
+        - webapp_privilege_escalation
+
+
+    - name: Check Pre-tasks
+      assert:
+        that:
+          - pretasks_key in plybk_data.keys()
+          - delegate_key in plybk_data.pre_tasks[0].keys()
+        fail_msg: "You should add a pre_task to log ."
+      tags:
+        - check_pre_tasks
+
+    - name: Check Post-tasks
+      assert:
+        that:
+          - posttasks_key in plybk_data.keys()
+          - delegate_key in plybk_data.post_tasks[0].keys()
+        fail_msg: "You should add a pre_task to log ."
+      tags:
+        - check_post_tasks
+
+    - name: Check log file deploymen start
+      assert:
+        that:
+          - "{{ lookup('pipe','tail -6 /tmp/times.txt | grep \"Deploying version\" | grep serverb | wc -l') }} == 1"
+          - "{{ lookup('pipe','tail -6 /tmp/times.txt | grep \"Deploying version\" | grep serverc | wc -l') }} == 1"
+          - "{{ lookup('pipe','tail -6 /tmp/times.txt | grep \"Deploying version\" | grep serverd | wc -l') }} == 1"
+          - "{{ lookup('pipe','tail -6 /tmp/times.txt | grep \"Deployment complete\" | grep serverb | wc -l') }} == 1"
+          - "{{ lookup('pipe','tail -6 /tmp/times.txt | grep \"Deployment complete\" | grep serverc | wc -l') }} == 1"
+          - "{{ lookup('pipe','tail -6 /tmp/times.txt | grep \"Deployment complete\" | grep serverd | wc -l') }} == 1"
+        fail_msg: "The file '/tmp/times.txt' does not contain the expected contents."
+      tags:
+        - check_log_contents
+
+    - name: Check Serial Keyword is present
+      assert:
+        that:
+          - serial_key in plybk_data.keys()
+        fail_msg: "'serial' keyword is missing from the playbook."
+      tags:
+        - check_serial
+
+    - name: Check Serial Keyword set correctly
+      assert:
+        that:
+          - plybk_data[serial_key] | length == 2
+          - plybk_data[serial_key][0] | trim == correct_serial_values[0] | trim
+          - plybk_data[serial_key][1] | trim == correct_serial_values[1] | trim
+        fail_msg: "'serial' keyword has the wrong values"
+      tags:
+        - check_serial
+
+    - name: Check Max Fail Attribute
+      assert:
+        that:
+          - max_fail_key in plybk_data.keys()
+          - plybk_data[max_fail_key] | trim in max_fail_values
+        success_msg: "Max. failure set correctly."
+        fail_msg: "Did not configure max failures correctly."
+      tags:
+        - check_max_fail

@@ -1,0 +1,74 @@
+- name: Clean Load Balancers
+  hosts: lb_servers
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: Remove packages
+      yum:
+        name:
+          - haproxy
+          - socat
+        state: absent
+    - set_fact:
+        firewall_rules:
+          - port: 80/tcp
+          - zone: internal
+            port: 8008/tcp
+          - zone: internal
+            source: 172.25.250.10
+
+
+- name: Clean Web Servers
+  hosts: web_servers
+  become: yes
+  gather_facts: no
+  tasks:
+    - name: Remove packages
+      yum:
+        name:
+          - httpd
+          - php
+          - git
+          - php-mysqlnd
+        state: absent
+    - set_fact:
+        firewall_rules:
+          - zone: internal
+            port: 8008/tcp
+          - zone: internal
+            source: 172.25.250.10
+
+    - vars:
+        loop_var: "{{ lookup('file', 'locations.yml') | from_yaml | list | map(attribute='name') }}"
+      debug:
+        var: loop_var
+
+    - name: Remove /var/www/html files
+      vars:
+        index_files:
+          - index
+      file:
+        path: "/var/www/html/{{ item }}.html"
+        state: absent
+      loop: "{{ lookup('file', 'locations.yml') | from_yaml | map(attribute='name')  | list | union(index_files) }}"
+
+
+- name: Clean Firewall rules
+  become: yes
+  hosts: lb_servers, web_servers
+  tasks:
+    - name: Ensure Firewall Sources Configuration
+      firewalld:
+        source: "{{ item.source | default(omit) }}"
+        zone: "{{ item.zone | default(omit) }}"
+        permanent: yes
+        state: 'disabled'
+        service: "{{ item.service | default(omit) }}"
+        port: "{{ item.port | default(omit) }}"
+      loop: "{{ firewall_rules }}"
+
+    - name: reload firewalld
+      service:
+        name: firewalld
+        state: reloaded
+

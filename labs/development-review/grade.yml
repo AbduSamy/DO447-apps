@@ -1,0 +1,74 @@
+- name: check development-review files
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - set_fact:
+        apache_play_roles: "{% set data=lookup('file','deploy_apache.yml') | from_yaml %}{{ data[0]['roles'] | list }}"
+        webapp_play: "{% set data=lookup('file','deploy_webapp.yml') | from_yaml %}{{ data[0] }}"
+        webapp_role_tasks: "{{ lookup('file','roles/webapp/tasks/main.yml') | from_yaml | list }}"
+        webapp_role_defaults: "{{ lookup('file','roles/webapp/defaults/main.yml') | from_yaml }}"
+      tags:
+        - apache_role_name
+        - webapp_play_name
+        - webapp_role_tasks
+        - webapp_role_variables
+
+    - set_fact:
+        apache_play_role_names: "{{ apache_play_roles | map(attribute='role') | list }}"
+      tags:
+        - apache_role_name
+
+    - name: Check role name in deploy_apache.yml
+      fail:
+        msg: "The apache role is not in the list of roles for the apache play. {{ apache_play_role_names }}"
+      when: "'apache' not in apache_play_role_names"
+      tags:
+        - apache_role_name
+
+    - name: Check play name in deploy_webapp.yml
+      fail:
+        msg: "The deploy_webapp.yml file does not have a play name"
+      when: "'name' not in webapp_play"
+      tags:
+        - webapp_play_name
+
+    - name: Check that all tasks have a name
+      fail:
+        msg: "The webapp role contains a task without a name. {{ item }}"
+      when: "'name' not in item"
+      loop: "{{ webapp_role_tasks }}"
+      tags:
+        - webapp_role_tasks
+
+    - name: Check webapp role default variables
+      fail:
+        msg: "The webapp default variables are not prefixed with 'webapp_'"
+      when: item not in webapp_role_defaults
+      loop:
+        - webapp_message
+        - webapp_version
+      tags:
+        - webapp_role_variables
+
+    - name: Check webapp role default variables
+      fail:
+        msg: "The old webapp default variables are still defined"
+      when: item in webapp_role_defaults
+      loop:
+        - message
+        - version
+      tags:
+        - webapp_role_variables
+
+    - name: Check webapp role tasks for variables
+      fail:
+        msg: "The webapp role task does not have the correct variable."
+      when: item not in webapp_role_tasks[0]['copy']['content']
+      loop:
+        - webapp_message
+        - webapp_version
+      tags:
+        - webapp_role_variables
+
+
+

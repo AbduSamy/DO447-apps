@@ -1,0 +1,60 @@
+- name: check development-review files
+  hosts: localhost
+  gather_facts: no
+  vars:
+    web_server_vars:
+      a: group_vars/a_web_servers/webapp.yml
+      b: group_vars/b_web_servers/webapp.yml
+  tasks:
+    - set_fact:
+        a_web_servers_version: "{% set data=lookup('file',web_server_vars['a']) | from_yaml %}{{ data['webapp_version'] }}"
+        b_web_servers_version: "{% set data=lookup('file',web_server_vars['b']) | from_yaml %}{{ data['webapp_version'] }}"
+#        apache_play_roles: "{% set data=lookup('file','deploy_apache.yml') | from_yaml %}{{ data[0]['roles'] | list }}"
+#        webapp_play: "{% set data=lookup('file','deploy_webapp.yml') | from_yaml %}{{ data[0] }}"
+#        webapp_role_tasks: "{{ lookup('file','roles/webapp/tasks/main.yml') | from_yaml | list }}"
+#        webapp_role_defaults: "{{ lookup('file','roles/webapp/defaults/main.yml') | from_yaml }}"
+      tags:
+        - vars_file_exists
+        - vars_file_value
+
+
+    - name: Check webapp_version from webapp.yml
+      fail:
+        msg: >
+          The value of webapp_version is not correct for the
+          {{ item.group }}.  Check the
+          group_vars/{{ item.group }}/webapp.yml file.
+      when: item.var_value != item.correct
+      loop:
+        - group: a_web_servers
+          var_value: "{{ a_web_servers_version }}"
+          correct: v1.1a
+        - group: b_web_servers
+          var_value: "{{ b_web_servers_version }}"
+          correct: v1.1b
+      tags:
+        - vars_file_value
+
+    - name: Check inventory hostnames for a_web_servers
+      set_fact:
+        test_a: "{% set data=groups['a_web_servers'][0][:9] %}{{ data }}"
+        test_b: "{% set data=groups['b_web_servers'][0][:9] %}{{ data }}"
+      tags:
+        - naming_conventions
+
+    - name: Check inventory hostnames for a_web_servers
+      fail:
+        msg: "The server {{ item.value }} does match the form: {{ item.correct }}N"
+      when: item.correct != item.value
+      loop:
+        - correct: backend_a
+          value: "{{ test_a }}"
+        - correct: backend_b
+          value: "{{ test_b }}"
+      tags:
+        - naming_conventions
+
+
+
+
+
