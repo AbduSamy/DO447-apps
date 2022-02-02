@@ -1,0 +1,9 @@
+- name: Populate users from file
+  hosts: all
+  gather_facts: no
+  tasks:
+    - name: Create remote user
+      debug:
+        msg: "To be done"
+
+
