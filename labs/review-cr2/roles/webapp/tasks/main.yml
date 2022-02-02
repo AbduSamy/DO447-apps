@@ -6,7 +6,13 @@
       content: "{{ webapp_message }}. (version {{ webapp_version}})\n"
       dest: /var/www/html/index.html
 
-  # TODO: Create location HTML files fom 'locations.yml' file
+  # TODO: Create a location html file for each
+  # entry in the 'locations.yml' file
+  #   * name each location file after the
+  #     the location's name.
+  #   * files are stored in /var/www/html
+  #   * use the location.html.j2 template
+  #   * remote file has an extension of 'html'
   - name: Ensure location files are created
     template:
       src: location.html.j2
