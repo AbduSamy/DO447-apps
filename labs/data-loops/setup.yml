@@ -1,0 +1,12 @@
+---
+- name: Add MySQL client to workstation
+  hosts: localhost
+  gather_facts: no
+
+  tasks:
+    - name: Install mysql
+      yum:
+        name: mysql
+        state: present
+
+

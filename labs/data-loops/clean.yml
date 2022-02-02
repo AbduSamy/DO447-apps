@@ -1,0 +1,70 @@
+---
+- name: Add Users To IDM
+  hosts: localhost
+  gather_facts: no
+  vars:
+    users:
+      johnd:
+        firstname: John
+        surname: Doe
+        pub_key_file: pubkeys/johnd/lab_rsa.pub
+      janed:
+        firstname: Jane
+        surname: Doe
+        pub_key_file: pubkeys/janed/lab_rsa.pub
+
+  tasks:
+    - name: Create Users
+      ipa_user:
+        name: "{{ item.key }}"
+        ipa_host: utility.lab.example.com
+        ipa_user: admin
+        ipa_pass: redhat321
+        validate_certs: no
+        state: absent
+      with_dict: "{{ users }}"
+
+
+- name: Enable Database Access
+  hosts: db_server
+  gather_facts: no
+  tasks:
+    - name: Disable user access to database
+      mysql_user:
+        name: "{{ item }}"
+        host_all: yes
+        state: absent
+      loop:
+        - johnd
+        - janed
+
+    - name: Disable Firewalld
+      firewalld:
+        service: mysql
+        state: disabled
+        permanent: yes
+        immediate:  yes
+
+    - name: Remove MySQL
+      yum:
+        name:
+          - mysql
+          - mysql-common
+          - mysql-server
+          - python2-PyMySQL
+          - python3-PyMySQL
+        state: absent
+
+
+- name: Allow Developer Access To Dev Servers
+  hosts: dev_web_servers
+  gather_facts: no
+  tasks:
+    - name: Create shared account
+      user:
+        name: developer
+        state: absent
+        force: yes
+        remove: yes
+
+

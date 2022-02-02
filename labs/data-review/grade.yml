@@ -1,0 +1,98 @@
+- name: check data-review files
+  hosts: localhost
+  gather_facts: no
+  vars:
+    task_file: roles/firewall/tasks/main.yml
+    apache_plybk: deploy_apache.yml
+    tfile: templates/apache_firewall_rules.yml.j2
+    state_str: "item.state|default('enabled'"
+    zone_str: "item.zone|default(omit"
+    protocol_str: "item.protocol\\|default\\('tcp'(,.*)?\\)\\|lower"
+    firewall_rules_var: firewall_rules
+    yaml_filter: from_yaml
+    template_plugin: "template"
+
+  tasks:
+
+    - set_fact:
+        task_data: "{{ lookup('file', task_file) | from_yaml }}"
+        plybk_data: "{{ lookup('file', apache_plybk) | from_yaml }}"
+        tfile_data: "{{ lookup('template', tfile) | from_yaml }}"
+        tfile_str: "{{ lookup('file', tfile) }}"
+#        apache_play_roles: "{% set data=lookup('file','deploy_apache.yml') | from_yaml %}{{ data[0]['roles'] | list }}"
+#        webapp_play: "{% set data=lookup('file','deploy_webapp.yml') | from_yaml %}{{ data[0] }}"
+#        webapp_role_tasks: "{{ lookup('file','roles/webapp/tasks/main.yml') | from_yaml | list }}"
+#        webapp_role_defaults: "{{ lookup('file','roles/webapp/defaults/main.yml') | from_yaml }}"
+      tags:
+        - check_state
+        - check_zone
+        - check_protocol
+        - check_template
+        - check_playbook
+
+    - name: Check firewall state attribute
+      assert:
+        that:
+          - state_str in item.split() | join('')
+        success_msg: "'state' keyword uses default('enabled')"
+        fail_msg: "'state' keyword does not use default('enabled')"
+      loop: "{{ task_data | map(attribute='firewalld') | map(attribute='state') | map('trim') | list }}"
+      tags:
+        - check_state
+
+    - name: Check firewall zone attribute
+      assert:
+        that:
+          - zone_str in item.split() | join('')
+        success_msg: "'zone' keyword uses default(omit)"
+        fail_msg: "'zone' keyword does not use default(omit)"
+      loop: "{{ task_data | map(attribute='firewalld') | map(attribute='zone') | map('trim') | list }}"
+      tags:
+        - check_zone
+
+    - name: Check firewall protocol expression
+      assert:
+        that:
+          - item.port.split() | join('') | regex_search(protocol_str)
+        success_msg: "'port' keyword contains {{ protocol_str }}"
+        fail_msg: "'protocol' keyword does not contain {{ protocol_str }}"
+      loop: "{{ task_data | map(attribute='firewalld') | list }}"
+      when: item.port is defined
+      tags:
+        - check_protocol
+
+    - name: Check templated rules for correct IP address
+      assert:
+        that:
+          - tfile_data[1].source == "172.25.250.10"
+        success_msg: "'source' keyword in the template is correct"
+        fail_msg: "'source' keyword is not correct."
+      tags:
+        - check_template
+
+    - name: Check template use of dig lookup
+      shell: cat {{ tfile }} | grep 'dig' | grep load_balancer
+      become: no
+      register: grep_result
+      changed_when: false
+      tags:
+        - check_template
+
+    - name: Set facts for apache playbook
+      set_fact:
+        first_play: "{{ plybk_data[0] }}"
+        fp_roles: "{{ plybk_data[0]['roles'] }}"
+        first_role: "{{ plybk_data[0]['roles'][0] }}"
+      tags:
+        - check_playbook
+
+    - name: Check playbook firewall_rules definition
+      assert:
+        that:
+          - firewall_rules_var in first_role.keys() | list
+          - template_plugin in first_role[firewall_rules_var]
+          - yaml_filter in first_role[firewall_rules_var]
+        success_msg: "'firewall_rules' are correct in deploy_apache.yml playbook."
+        fail_msg: "'firewall_rules' are not correct in deploy_apache.yml playbook."
+      tags:
+        - check_playbook
