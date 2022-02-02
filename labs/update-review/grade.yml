@@ -1,0 +1,181 @@
+- name: check update-review files
+  hosts: localhost
+  gather_facts: no
+  vars:
+    webapp_plybk: update_webapp.yml
+    max_fail_key: max_fail_percentage
+    serial_key: serial
+    delegate_key: delegate_to
+    del_value1: "{% raw %}{{groups['lb_servers'][0]}}{% endraw %}"
+    del_value2: '{% raw %}{{groups["lb_servers"][0]}}{% endraw %}'
+    haproxy_host_val: "{% raw %}{{inventory_hostname}}{% endraw %}"
+    haproxy_mod: haproxy
+    pretasks_key: pre_tasks
+    host_key: host
+    state_key: state
+    smoke_test_correct_url: "{% raw %}http://{{inventory_hostname}}:{{apache_port}}{% endraw %}"
+    correct_serial_values:
+      - 5%
+      - 35%
+      - 100%
+    max_fail_values:
+      - "0%"
+      - "0"
+
+  tasks:
+    - set_fact:
+        plybk_data: "{% set data=lookup('file', webapp_plybk) | from_yaml %}{{ data[0] }}"
+      tags:
+        - check_max_fail
+        - check_serial
+        - check_pre_task_delegation
+        - check_post_task_delegation
+        - check_pre_task_haproxy
+        - check_post_task_haproxy
+        - check_post_task_test
+
+    - name: Check Max Fail Attribute
+      assert:
+        that:
+          - max_fail_key in plybk_data.keys()
+          - plybk_data[max_fail_key] | trim in max_fail_values
+        success_msg: "Max. failure set correctly."
+        fail_msg: "Did not configure max failures correctly."
+      tags:
+        - check_max_fail
+
+    - name: Check Serial Keyword is present
+      assert:
+        that:
+          - serial_key in plybk_data.keys()
+        fail_msg: "'serial' keyword is missing from the playbook."
+      tags:
+        - check_serial
+
+    - name: Check Serial Keyword set correctly
+      assert:
+        that:
+          - plybk_data[serial_key][0] | trim == correct_serial_values[0] | trim
+          - plybk_data[serial_key][1] | trim == correct_serial_values[1] | trim
+          - plybk_data[serial_key][2] | trim == correct_serial_values[2] | trim
+        fail_msg: "'serial' keyword has the wrong values"
+      tags:
+        - check_serial
+
+    - name: Check Pre-tasks delegation, pt1
+      assert:
+        that:
+          - pretasks_key in plybk_data.keys()
+          - plybk_data['pre_tasks'] | length == 1
+          - delegate_key in plybk_data['pre_tasks'][0].keys()
+        fail_msg: "The pre-task delegation is not configured correctly."
+      tags:
+        - check_pre_task_delegation
+
+    - name: Set Pretask variable
+      set_fact:
+        pretask: "{{ plybk_data['pre_tasks'][0] }}"
+        del_value: "{% set data=plybk_data['pre_tasks'][0]['delegate_to'] | trim %}{{ data.split() | join('') }}"
+      tags:
+        - check_pre_task_delegation
+        - check_pre_task_haproxy
+
+    - name: Check pre_tasks delegation, pt2
+      assert:
+        that:
+          - (del_value == del_value1) or (del_value == del_value2)
+      tags:
+        - check_pre_task_delegation
+
+    - name: Check Haproxy config, pt1
+      assert:
+        that:
+          - haproxy_mod in plybk_data['pre_tasks'][0].keys()
+          - host_key in plybk_data['pre_tasks'][0]['haproxy']
+          - state_key in plybk_data['pre_tasks'][0]['haproxy']
+        fail_msg: "The haproxy module is not configured correctly in pre_tasks"
+      tags:
+        - check_pre_task_haproxy
+
+    - name: Set Haproxy-related Variables
+      set_fact:
+        hamod: "{{ plybk_data['pre_tasks'][0]['haproxy'] }}"
+        haproxy_host_value: "{% set data=plybk_data['pre_tasks'][0]['haproxy']['host'] | trim %}{{ data.split() | join('') }}"
+      tags:
+        - check_pre_task_haproxy
+
+    - name: Check haproxy config, pt2
+      assert:
+        that:
+          - haproxy_host_value == haproxy_host_val
+          - hamod['state'] | trim == 'disabled'
+      tags:
+        - check_pre_task_haproxy
+
+    - name: Check Post-tasks delegation, pt1
+      assert:
+        that:
+          - plybk_data['post_tasks'] | length == 2
+          - delegate_key in plybk_data['post_tasks'][0].keys()
+          - delegate_key in plybk_data['post_tasks'][1].keys()
+        fail_msg: "The post-task delegation is not set for both post_tasks."
+      tags:
+        - check_post_task_delegation
+
+    - name: Set Posttask variable
+      set_fact:
+        posttask1: "{{ plybk_data['post_tasks'][0] }}"
+        posttask2: "{{ plybk_data['post_tasks'][1] }}"
+        post_del_value1: "{% set data=plybk_data['post_tasks'][0]['delegate_to'] | trim %}{{ data.split() | join('') }}"
+        post_del_value2: "{% set data=plybk_data['post_tasks'][1]['delegate_to'] | trim %}{{ data.split() | join('') }}"
+      tags:
+        - check_post_task_delegation
+        - check_post_task_haproxy
+        - check_post_task_test
+
+    - name: Check post_tasks delegation, pt2
+      assert:
+        that:
+          - (post_del_value1 == del_value1) or (post_del_value1 == del_value2)
+          - (post_del_value2 == del_value1) or (post_del_value2 == del_value2)
+      tags:
+        - check_post_task_delegation
+
+    - name: Check Haproxy post_tasks config, pt1
+      assert:
+        that:
+          - haproxy_mod in posttask2
+          - host_key in posttask2['haproxy']
+          - state_key in posttask2['haproxy']
+        fail_msg: "The haproxy module is not configured correctly in post_tasks"
+      tags:
+        - check_post_task_haproxy
+
+    - name: Set Haproxy-related Variables
+      set_fact:
+        hamod: "{{ posttask2['haproxy'] }}"
+        haproxy_host_value: "{% set data=posttask2['haproxy']['host'] | trim %}{{ data.split() | join('') }}"
+      tags:
+        - check_post_task_haproxy
+
+    - name: Check haproxy post_tasks config, pt2
+      assert:
+        that:
+          - haproxy_host_value == haproxy_host_val
+          - hamod['state'] | trim == 'enabled'
+      tags:
+        - check_post_task_haproxy
+
+    - name: Set Smoke test Variables
+      set_fact:
+        smoke_test_url: "{% set data=posttask1['uri']['url'] | trim %}{{ data.split() | join('') }}"
+      tags:
+        - check_post_task_test
+
+    - name: Check haproxy post_tasks config, pt2
+      assert:
+        that:
+          - smoke_test_url == smoke_test_correct_url
+      tags:
+        - check_post_task_test
+

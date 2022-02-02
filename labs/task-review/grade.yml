@@ -1,0 +1,208 @@
+- name: check files
+  hosts: localhost
+  gather_facts: no
+  vars:
+    roles_dir: /home/student/git-repos/task-review/roles
+    root_dir: /home/student/git-repos/task-review
+    cfg_file: /home/student/git-repos/task-review/ansible.cfg
+    timer_key: timer
+    profile_tasks_key: profile_tasks
+    become_key: become
+    block_key: block
+    pretask_key: pre_tasks
+    copy_key: copy
+    dest_key: dest
+    yum_key: yum
+  tasks:
+    - block:
+      - name: Try setting global_become
+        set_fact:
+          global_become: "{{ lookup('ini','become section=privilege_escalation file=/home/student/git-repos/task-review/ansible.cfg') }}"
+      rescue:
+        - name: Fallback for global_become
+          set_fact:
+            global_become: NOT_PRESENT
+      tags:
+        - global_privilege_escalation
+
+    - name: Check privilege escalation in ansible.cfg
+      assert:
+        that:
+          - global_become == "NOT_PRESENT" or not global_become
+        fail_msg: "'become=true' is still present in ansible.cfg"
+      tags:
+        - global_privilege_escalation
+
+
+    - name: Set facts for firewall tasks
+      set_fact:
+        firewall_task_yaml: "{% set data=lookup('file',roles_dir + '/firewall/tasks/main.yml') | from_yaml %}{{ data[0] }}"
+        firewall_handler_yaml: "{% set data=lookup('file',roles_dir + '/firewall/handlers/main.yml') | from_yaml %}{{ data[0] }}"
+      tags:
+        - firewall_privilege_escalation_tasks
+        - firewall_privilege_escalation_handlers
+
+    - name: Check firewall tasks
+      assert:
+        that:
+          - become_key in firewall_task_yaml.keys()
+          - firewall_task_yaml['become'] | bool
+      tags:
+        - firewall_privilege_escalation_tasks
+
+    - name: Check firewall handlers
+      assert:
+        that:
+          - become_key in firewall_handler_yaml.keys()
+          - firewall_handler_yaml['become'] | bool
+      tags:
+        - firewall_privilege_escalation_handlers
+
+
+    - name: Set facts for haproxy tasks
+      set_fact:
+        haproxy_task_yaml: "{% set data=lookup('file',roles_dir + '/haproxy/tasks/main.yml') | from_yaml %}{{ data }}"
+        haproxy_handler_yaml: "{% set data=lookup('file',roles_dir + '/haproxy/handlers/main.yml') | from_yaml %}{{ data }}"
+      tags:
+        - haproxy_privilege_escalation_tasks
+        - haproxy_privilege_escalation_handlers
+
+    - name: Check haproxy tasks
+      assert:
+        that:
+          - haproxy_task_yaml | length == 1
+          - block_key in haproxy_task_yaml[0].keys()
+          - become_key in haproxy_task_yaml[0].keys()
+          - haproxy_task_yaml[0]['become'] | bool
+        fail_msg: >
+          Because all tasks require privilege escalation,
+          all tasks inside a single 'block' task, with
+          no other tasks.  The 'block' should have
+          privilege escalation enabled.
+      tags:
+        - haproxy_privilege_escalation_tasks
+
+    - name: Check haproxy handlers
+      assert:
+        that:
+          - haproxy_handler_yaml | length > 1
+          - become_key in haproxy_handler_yaml[0].keys()
+          - haproxy_handler_yaml[0]['become'] | bool
+          - become_key in haproxy_handler_yaml[1].keys()
+          - haproxy_handler_yaml[1]['become'] | bool
+      tags:
+        - haproxy_privilege_escalation_handlers
+
+
+    - name: Set facts for apache tasks
+      set_fact:
+        apache_task_yaml: "{% set data=lookup('file',roles_dir + '/apache/tasks/main.yml') | from_yaml %}{{ data }}"
+      tags:
+        - apache_privilege_escalation_tasks
+        - apache_yum_task
+
+    - name: Check apache tasks
+      assert:
+        that:
+          - apache_task_yaml | length == 1
+          - block_key in apache_task_yaml[0].keys()
+          - become_key in apache_task_yaml[0].keys()
+          - apache_task_yaml[0]['become'] | bool
+        fail_msg: >
+          Because all tasks require privilege escalation,
+          all tasks inside a single 'block' task, with
+          no other tasks.  The 'block' should have
+          privilege escalation enabled.
+      tags:
+        - apache_privilege_escalation_tasks
+
+    - name: Set facts for webapp tasks
+      set_fact:
+        webapp_task_yaml: "{% set data=lookup('file',roles_dir + '/webapp/tasks/main.yml') | from_yaml %}{{ data }}"
+      tags:
+        - webapp_privilege_escalation_tasks
+
+    - name: Check webapp tasks
+      assert:
+        that:
+          - webapp_task_yaml | length == 1
+          - become_key in webapp_task_yaml[0].keys()
+          - webapp_task_yaml[0]['become'] | bool
+      tags:
+        - webapp_privilege_escalation_tasks
+
+
+    - name: Set facts for profiling check
+      set_fact:
+        global_profiling: "{% set data=lookup('ini','callback_whitelist section=defaults file='+cfg_file) %}{{ data.split(',') | map('trim') | list }}"
+      tags:
+        - profiling
+
+    - name: Check callback plugins
+      assert:
+        that:
+          - timer_key in global_profiling
+          - profile_tasks_key in global_profiling
+      tags:
+        - profiling
+
+    - name: Set facts haproxy pre_tasks
+      set_fact:
+        haproxy_plbk: "{% set data=lookup('file',root_dir + '/deploy_haproxy.yml') | from_yaml %}{{ data }}"
+      tags:
+        - haproxy_pretask
+
+    - name: Check haproxy pre_tasks
+      assert:
+        that:
+          - haproxy_plbk | length == 1
+          - pretask_key in haproxy_plbk[0].keys()
+          - haproxy_plbk[0]['pre_tasks'] | length == 1
+          - copy_key in haproxy_plbk[0]['pre_tasks'][0].keys()
+          - dest_key in haproxy_plbk[0]['pre_tasks'][0]['copy'].keys()
+          - haproxy_plbk[0]['pre_tasks'][0]['copy']['dest'] == "/tmp/site.ready"
+      tags:
+        - haproxy_pretask
+
+    - name: Check apache yum task
+      block:
+        - assert:
+            that:
+              - apache_task_yaml | length == 1
+              - block_key in apache_task_yaml[0].keys()
+              - apache_task_yaml[0]['block'] | length == 3
+              - yum_key in apache_task_yaml[0]['block'][0].keys()
+              - apache_task_yaml[0]['block'][0]['yum']['name'] | length == 4
+      rescue:
+        # In case the student hasn't implemented a block for apache tasks...
+        - debug:
+            var: apache_task_yaml
+        - assert:
+            that:
+              - apache_task_yaml | length == 3
+              - yum_key in apache_task_yaml[0].keys()
+              - apache_task_yaml[0]['yum']['name'] | length == 4
+      tags:
+        -  apache_yum_task
+
+
+- name: check haproxy handler files
+  hosts: lb_servers
+  gather_facts: no
+  tasks:
+
+    - name: Check that the pre_task status file exists
+      stat:
+        path: /tmp/site.ready
+      register: st
+      failed_when: not st.stat.exists
+      tags:
+        - pretask_handlers
+
+    - name: Check that the haproxy status file exists
+      stat:
+        path: /tmp/haproxy.status
+      register: st
+      failed_when: not st.stat.exists
+      tags:
+        - haproxy_handlers

@@ -1,0 +1,70 @@
+- name: Clean Load Balancers
+  hosts: lb_servers
+  gather_facts: no
+  tasks:
+    - name: Remove packages
+      yum:
+        name: haproxy
+        state: absent
+    - file:
+        path: /etc/haproxy/haproxy.cfg
+        state: absent
+    - set_fact:
+        firewall_rules:
+          - port: 80/tcp
+
+
+- name: Clean Web Servers
+  hosts: web_servers
+  gather_facts: no
+  tasks:
+    - name: Ensure SELinux does not allow httpd connections to a remote database
+      seboolean:
+        name: httpd_can_network_connect_db
+        state: false
+        persistent: yes
+
+    - name: Remove packages
+      yum:
+        name:
+          - httpd
+          - git
+          - php
+          - php-mysqlnd
+        state: absent
+    - set_fact:
+        firewall_rules:
+          - zone: internal
+            service: http
+          - zone: internal
+            source: 172.25.250.10
+    - name: Remove index.html
+      file:
+        path: "/var/www/html/{{ item }}"
+        state: absent
+      loop:
+        - index.html
+        - test.html
+        - index.php
+
+
+- name: Clean Firewall rules
+  hosts: lb_servers, web_servers
+  tasks:
+    - name: Ensure Firewall Sources Configuration
+      firewalld:
+        source: "{{ item.source if item.source is defined else omit }}"
+        zone: "{{ item.zone if item.zone is defined else omit }}"
+        permanent: yes
+        state: 'disabled'
+        service: "{{ item.service if item.service is defined else omit }}"
+        port: "{{ item.port if item.port is defined else omit }}"
+      loop: "{{ firewall_rules }}"
+
+    - name: reload firewalld
+      service:
+        name: firewalld
+        state: reloaded
+
+
+

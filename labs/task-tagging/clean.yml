@@ -1,0 +1,70 @@
+- name: Clean Load Balancers
+  hosts: lb_servers
+  become: true
+  gather_facts: no
+  tasks:
+    - name: Remove packages
+      yum:
+        name: haproxy
+        state: absent
+        autoremove: yes
+    - set_fact:
+        firewall_rules:
+          - port: 80/tcp
+
+          - zone: internal
+            service: http
+          - zone: internal
+            source: 172.25.250.10
+
+
+- name: Clean Web Servers
+  hosts: web_servers
+  become: true
+  gather_facts: no
+  tasks:
+    - name: Remove packages
+      yum:
+        name: httpd
+        state: absent
+        autoremove: yes
+    - set_fact:
+        firewall_rules:
+          - zone: internal
+            service: http
+          - zone: internal
+            source: 172.25.250.10
+
+    - name: Disable httpd connections to a remote database
+      seboolean:
+        name: httpd_can_network_connect_db
+        state: false
+        persistent: true
+
+    - name: Remove index.html
+      file:
+        path: /var/www/html/index.html
+        state: absent
+
+
+- name: Clean Firewall rules
+  hosts: lb_servers, web_servers
+  become: true
+  tasks:
+    - name: Ensure Firewall Sources Configuration
+      firewalld:
+        source: "{{ item.source | default(omit) }}"
+        zone: "{{ item.zone | default(omit) }}"
+        permanent: yes
+        state: 'disabled'
+        service: "{{ item.service | default(omit) }}"
+        port: "{{ item.port | default(omit) }}"
+      loop: "{{ firewall_rules }}"
+
+    - name: reload firewalld
+      service:
+        name: firewalld
+        state: reloaded
+
+
+

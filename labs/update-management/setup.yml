@@ -1,0 +1,13 @@
+---
+- name: Ensure packages exist on workstation
+  hosts: localhost
+  gather_facts: no
+
+  tasks:
+    - name: Install packages
+      yum:
+        name:
+          - python3-dns
+        state: present
+
+
